@@ -1,6 +1,7 @@
 package reporting
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -10,9 +11,12 @@ import (
 	"github.com/projectdiscovery/nuclei/v2/pkg/model/types/stringslice"
 	"github.com/projectdiscovery/nuclei/v2/pkg/output"
 	"github.com/projectdiscovery/nuclei/v2/pkg/reporting/dedupe"
+	"github.com/projectdiscovery/nuclei/v2/pkg/reporting/exporters/db"
+	rdb "github.com/projectdiscovery/nuclei/v2/pkg/reporting/exporters/db"
 	"github.com/projectdiscovery/nuclei/v2/pkg/reporting/exporters/es"
 	"github.com/projectdiscovery/nuclei/v2/pkg/reporting/exporters/markdown"
 	"github.com/projectdiscovery/nuclei/v2/pkg/reporting/exporters/sarif"
+	dingtalkbot "github.com/projectdiscovery/nuclei/v2/pkg/reporting/trackers/dingtalkBot"
 	"github.com/projectdiscovery/nuclei/v2/pkg/reporting/trackers/github"
 	"github.com/projectdiscovery/nuclei/v2/pkg/reporting/trackers/gitlab"
 	"github.com/projectdiscovery/nuclei/v2/pkg/reporting/trackers/jira"
@@ -36,7 +40,9 @@ type Options struct {
 	// SarifExporter contains configuration options for Sarif Exporter Module
 	SarifExporter *sarif.Options `yaml:"sarif"`
 	// ElasticsearchExporter contains configuration options for Elasticsearch Exporter Module
-	ElasticsearchExporter *es.Options `yaml:"elasticsearch"`
+	ElasticsearchExporter *es.Options          `yaml:"elasticsearch"`
+	DingtalkBot           *dingtalkbot.Options `yaml:"dingtalkbot"`
+	RdsExporter           *db.Options          `yaml:"rds"`
 	HttpClient            *retryablehttp.Client
 }
 
@@ -48,8 +54,8 @@ type Filter struct {
 }
 
 const (
-	reportingClientCreationErrorMessage  = "could not create reporting client"
-	exportClientCreationErrorMessage = "could not create exporting client"
+	reportingClientCreationErrorMessage = "could not create reporting client"
+	exportClientCreationErrorMessage    = "could not create exporting client"
 )
 
 // GetMatch returns true if a filter matches result event
@@ -113,6 +119,7 @@ type Client struct {
 
 // New creates a new nuclei issue tracker reporting client
 func New(options *Options, db string) (*Client, error) {
+	fmt.Sprintf("[bittea reporting.go] db: %s", db)
 	client := &Client{options: options}
 	if options.GitHub != nil {
 		options.GitHub.HttpClient = options.HttpClient
@@ -156,6 +163,23 @@ func New(options *Options, db string) (*Client, error) {
 		options.ElasticsearchExporter.HttpClient = options.HttpClient
 		exporter, err := es.New(options.ElasticsearchExporter)
 		if err != nil {
+			return nil, errors.Wrap(err, exportClientCreationErrorMessage)
+		}
+		client.exporters = append(client.exporters, exporter)
+	}
+	if options.DingtalkBot != nil {
+		options.DingtalkBot.HttpClient = options.HttpClient
+		tracker, err := dingtalkbot.New(options.DingtalkBot)
+		if err != nil {
+			return nil, errors.Wrap(err, reportingClientCreationErrorMessage)
+		}
+		client.trackers = append(client.trackers, tracker)
+	}
+	if options.RdsExporter != nil {
+		options.RdsExporter.HttpClient = options.HttpClient
+		exporter, err := rdb.New(options.RdsExporter)
+		if err != nil {
+			fmt.Sprintf("%s", err)
 			return nil, errors.Wrap(err, exportClientCreationErrorMessage)
 		}
 		client.exporters = append(client.exporters, exporter)
